@@ -23,24 +23,13 @@ import com.google.common.collect.Lists;
 import com.puppycrawl.tools.checkstyle.api.AuditListener;
 import com.puppycrawl.tools.checkstyle.api.CheckstyleException;
 import com.puppycrawl.tools.checkstyle.api.Configuration;
+import com.puppycrawl.tools.checkstyle.cli.CommandLineValidator;
+import com.puppycrawl.tools.checkstyle.cli.options.VersionOption;
+import org.apache.commons.cli.*;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
+import java.io.*;
 import java.util.List;
 import java.util.Properties;
-
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.DefaultParser;
-import org.apache.commons.cli.HelpFormatter;
-import org.apache.commons.cli.Options;
-import org.apache.commons.cli.ParseException;
 
 /**
  * Wrapper command line program for the Checker.
@@ -74,28 +63,27 @@ public final class Main {
             final CommandLine commandLine = parseCli(args);
 
             // show version and exit if it is requested
-            if (commandLine.hasOption("v")) {
-                System.out.println("Checkstyle version: "
-                        + Main.class.getPackage().getImplementationVersion());
-                exitStatus = 0;
+            VersionOption versionOption = new VersionOption();
+            boolean isVersionRequested = versionOption.validate(commandLine);
+            if (isVersionRequested) {
+                System.out.println(versionOption.getValidationMessage());
+                System.exit(0);
+            }
+            // return error is smth is wrong in arguments
+            final List<String> messages = validateCli(commandLine);
+            cliViolations = !messages.isEmpty();
+            if (!cliViolations) {
+                // create config helper object
+                final CliOptions config = convertCliToPojo(commandLine);
+                // run Checker
+                errorCounter = runCheckstyle(config);
+                exitStatus = errorCounter;
             }
             else {
-                // return error is smth is wrong in arguments
-                final List<String> messages = validateCli(commandLine);
-                cliViolations = !messages.isEmpty();
-                if (!cliViolations) {
-                    // create config helper object
-                    final CliOptions config = convertCliToPojo(commandLine);
-                    // run Checker
-                    errorCounter = runCheckstyle(config);
-                    exitStatus = errorCounter;
-                }
-                else {
-                    exitStatus = exitWithCliViolation;
-                    errorCounter = 1;
-                    for (String message : messages) {
-                        System.out.println(message);
-                    }
+                exitStatus = exitWithCliViolation;
+                errorCounter = 1;
+                for (String message : messages) {
+                    System.out.println(message);
                 }
             }
         }
@@ -143,50 +131,8 @@ public final class Main {
      * @return list of violations
      */
     private static List<String> validateCli(CommandLine cmdLine) {
-        final List<String> result = new ArrayList<>();
-        // ensure a configuration file is specified
-        if (cmdLine.hasOption("c")) {
-            final String configLocation = cmdLine.getOptionValue("c");
-            final File configFile =  new File(configLocation);
-            if (!configFile.exists()) {
-                result.add(String.format("unable to find '%s'.", configLocation));
-            }
-
-            // validate optional parameters
-            if (cmdLine.hasOption("f")) {
-                final String format = cmdLine.getOptionValue("f");
-                if (!"plain".equals(format) && !"xml".equals(format)) {
-                    result.add(String.format("Invalid output format."
-                            + " Found '%s' but expected 'plain' or 'xml'.", format));
-                }
-            }
-
-            if (cmdLine.hasOption("p")) {
-                final String propertiesLocation = cmdLine.getOptionValue("p");
-                final File file = new File(propertiesLocation);
-                if (!file.exists()) {
-                    result.add(String.format("Could not find file '%s'.", propertiesLocation));
-                }
-            }
-
-            if (cmdLine.hasOption("o")) {
-                final String outputLocation = cmdLine.getOptionValue("o");
-                final File file = new File(outputLocation);
-                if (file.exists() && !(file.canRead() && file.canWrite())) {
-                    result.add(String.format("Permission denied : '%s'.", outputLocation));
-                }
-            }
-
-            final List<File> files = getFilesToProcess(cmdLine.getArgs());
-            if (files.isEmpty()) {
-                result.add("Must specify files to process, found 0.");
-            }
-        }
-        else {
-            result.add("Must specify a config XML file.");
-        }
-
-        return result;
+        CommandLineValidator commandLineValidator = CommandLineValidator.withDefaults(cmdLine, getFilesToProcess(cmdLine.getArgs()));
+        return commandLineValidator.validate();
     }
 
     /**
